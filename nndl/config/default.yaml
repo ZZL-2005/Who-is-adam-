@@ -1,7 +1,7 @@
 seed: 42
-epochs: 800
+epochs: 400
 batch_size: 128
-num_workers: 4
+num_workers: 12
 device: "cuda"
 learning_rates:
   - 0.001
@@ -11,8 +11,8 @@ learning_rates:
 weight_decay: 0.0
 log_interval: 50
 val_interval: 1
-checkpoint_interval: 1
-max_checkpoints: 5
+checkpoint_interval: 20
+max_checkpoints: 1000
 data_root: "./data"
 output_dir: "./output"
 model: "ResNet18"

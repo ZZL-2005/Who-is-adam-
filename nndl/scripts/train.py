@@ -11,6 +11,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import yaml
+from tqdm import tqdm, trange
 
 from datasets.cifar10 import DataConfig, create_cifar10_dataloaders, set_global_seed
 from models import build_model
@@ -53,11 +54,7 @@ def _prepare_run_directory(base_dir: Path, run_name: str) -> Dict[str, Path]:
     return {"root": run_dir, "checkpoints": checkpoints}
 
 
-def _save_run_configs(
-    run_dir: Path,
-    base_config_path: Path,
-    run_config: Dict[str, Any],
-) -> None:
+def _save_run_configs(run_dir: Path, base_config_path: Path, run_config: Dict[str, Any]) -> None:
     if base_config_path.is_file():
         shutil.copy2(base_config_path, run_dir / "base_config.yaml")
     config_path = run_dir / "config.yaml"
@@ -69,12 +66,7 @@ def _one_hot(targets: torch.Tensor, num_classes: int) -> torch.Tensor:
     return torch.nn.functional.one_hot(targets, num_classes=num_classes).float()
 
 
-def _compute_loss(
-    outputs: torch.Tensor,
-    targets: torch.Tensor,
-    criterion: nn.Module,
-    loss_name: LossName,
-) -> torch.Tensor:
+def _compute_loss(outputs: torch.Tensor, targets: torch.Tensor, criterion: nn.Module, loss_name: LossName) -> torch.Tensor:
     if loss_name == "mse":
         num_classes = outputs.size(1)
         targets_one_hot = _one_hot(targets, num_classes)
@@ -126,7 +118,7 @@ def _train_one_epoch(
     correct = 0
     total = 0
 
-    for inputs, targets in loader:
+    for inputs, targets in tqdm(loader, desc="Training", leave=False):
         inputs = inputs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
@@ -159,7 +151,7 @@ def _evaluate(
     correct = 0
     total = 0
 
-    for inputs, targets in loader:
+    for inputs, targets in tqdm(loader, desc="Evaluating", leave=False):
         inputs = inputs.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
 
@@ -176,36 +168,22 @@ def _evaluate(
     return mean_loss, accuracy
 
 
-def _save_checkpoint(
-    model: nn.Module,
-    optimizer: torch.optim.Optimizer,
-    epoch: int,
-    run_dir: Path,
-    max_to_keep: Optional[int],
-    saved_paths: List[Path],
-) -> None:
-    checkpoint = {
-        "epoch": epoch,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-    }
+def _save_checkpoint(model: nn.Module, optimizer: torch.optim.Optimizer, epoch: int, run_dir: Path, max_to_keep: Optional[int], saved_paths: List[Path]) -> None:
+    checkpoint = {"epoch": epoch, "model_state": model.state_dict(), "optimizer_state": optimizer.state_dict()}
     checkpoint_path = run_dir / f"epoch_{epoch:03d}.pt"
     torch.save(checkpoint, checkpoint_path)
     saved_paths.append(checkpoint_path)
 
-    if max_to_keep is None or max_to_keep <= 0:
-        return
-
-    while len(saved_paths) > max_to_keep:
-        oldest = saved_paths.pop(0)
-        if oldest.exists():
-            oldest.unlink()
+    if max_to_keep is not None and max_to_keep > 0:
+        while len(saved_paths) > max_to_keep:
+            oldest = saved_paths.pop(0)
+            if oldest.exists():
+                oldest.unlink()
 
 
 def _write_run_log(records: List[Dict[str, Any]], log_path: Path) -> None:
     if not records:
         return
-
     fieldnames = ["run_name", "epoch", "split", "loss", "accuracy"]
     with log_path.open("w", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
@@ -216,7 +194,6 @@ def _write_run_log(records: List[Dict[str, Any]], log_path: Path) -> None:
 def _append_results(summary: Dict[str, Any], results_path: Path) -> None:
     fieldnames = sorted(summary.keys())
     write_header = not results_path.exists()
-
     with results_path.open("a", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
         if write_header:
@@ -229,11 +206,7 @@ def _format_run_name(model: str, optimizer: str, loss_name: str, lr: float, time
     return f"{timestamp}_{model}_{optimizer}_{loss_name}_lr{lr_str}"
 
 
-def run_experiments(
-    config: ExperimentConfig,
-    raw_cfg: Dict[str, Any],
-    config_source: Path,
-) -> None:
+def run_experiments(config: ExperimentConfig, raw_cfg: Dict[str, Any], config_source: Path) -> None:
     device = torch.device(config.device if torch.cuda.is_available() or config.device == "cpu" else "cpu")
     if device.type != config.device:
         print(f"[WARN] Requested device '{config.device}' not available. Falling back to '{device}'.")
@@ -247,130 +220,70 @@ def run_experiments(
     test_loader = loaders["test"]
 
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-
     optimizer_name = config.optimizer_config.get("name", "")
-    for optimizer_name in [optimizer_name]:
-        for loss_name in config.loss_functions:
-            for lr in config.learning_rates:
-                run_name = _format_run_name(config.model, optimizer_name, loss_name, lr, timestamp)
-                print(f"\n=== Running experiment: {run_name} ===")
 
-                set_global_seed(config.seed)
-                model = build_model(config.model, num_classes=10, pretrained=False).to(device)
-                optimizer_cfg = dict(config.optimizer_config)
-                optimizer_cfg["lr"] = lr
-                optimizer_cfg["weight_decay"] = config.weight_decay
-                optimizer = _build_optimizer(model, optimizer_cfg, lr_override=lr)
-                criterion = _build_loss(loss_name).to(device)
+    for loss_name in config.loss_functions:
+        for lr in config.learning_rates:
+            run_name = _format_run_name(config.model, optimizer_name, loss_name, lr, timestamp)
+            print(f"\n=== Running experiment: {run_name} ===")
 
-                run_paths = _prepare_run_directory(dirs["runs"], run_name)
-                run_dir = run_paths["root"]
-                run_checkpoint_dir = run_paths["checkpoints"]
-                run_log_path = run_dir / "metrics.csv"
+            set_global_seed(config.seed)
+            model = build_model(config.model, num_classes=10, pretrained=False).to(device)
+            optimizer_cfg = dict(config.optimizer_config)
+            optimizer_cfg["lr"] = lr
+            optimizer_cfg["weight_decay"] = config.weight_decay
+            optimizer = _build_optimizer(model, optimizer_cfg, lr_override=lr)
+            criterion = _build_loss(loss_name).to(device)
 
-                run_config_dict = copy.deepcopy(raw_cfg)
-                run_config_dict["run_name"] = run_name
-                run_config_dict["timestamp"] = timestamp
-                run_config_dict["model"] = config.model
-                run_config_dict["device"] = config.device
-                run_config_dict["epochs"] = config.epochs
-                run_config_dict["seed"] = config.seed
-                run_config_dict["learning_rate"] = lr
-                run_config_dict["learning_rates"] = [lr]
-                run_config_dict["loss_function"] = loss_name
-                run_config_dict["loss_functions"] = [loss_name]
-                run_config_dict["optimizer"] = copy.deepcopy(run_config_dict.get("optimizer", {}))
-                run_config_dict["optimizer"]["name"] = optimizer_name
-                run_config_dict["optimizer"]["lr"] = lr
-                run_config_dict["optimizer"]["weight_decay"] = config.weight_decay
-                run_config_dict["data_config"] = asdict(config.data_cfg)
-                run_config_dict["output_dir"] = str(config.output_dir)
-                run_config_dict["artifacts"] = {
-                    "run_dir": str(run_dir),
-                    "checkpoints": str(run_checkpoint_dir),
-                    "log": str(run_log_path),
-                }
+            run_paths = _prepare_run_directory(dirs["runs"], run_name)
+            run_dir = run_paths["root"]
+            run_checkpoint_dir = run_paths["checkpoints"]
+            run_log_path = run_dir / "metrics.csv"
 
-                _save_run_configs(run_dir, config_source, run_config_dict)
+            _save_run_configs(run_dir, config_source, raw_cfg)
 
-                epoch_records: List[Dict[str, Any]] = []
-                saved_checkpoints: List[Path] = []
+            epoch_records: List[Dict[str, Any]] = []
+            saved_checkpoints: List[Path] = []
 
-                best_val_acc = -math.inf
-                best_test_acc = -math.inf
-                best_epoch = 0
+            best_val_acc = -math.inf
+            best_test_acc = -math.inf
+            best_epoch = 0
 
-                for epoch in range(1, config.epochs + 1):
-                    train_loss, train_acc = _train_one_epoch(model, train_loader, optimizer, criterion, loss_name, device)
-                    epoch_records.append(
-                        {
-                            "run_name": run_name,
-                            "epoch": epoch,
-                            "split": "train",
-                            "loss": train_loss,
-                            "accuracy": train_acc,
-                        }
-                    )
-                    print(f"Epoch {epoch:03d} | train_loss={train_loss:.4f} train_acc={train_acc*100:.2f}%")
+            for epoch in trange(1, config.epochs + 1, desc="Epoch Progress"):
+                train_loss, train_acc = _train_one_epoch(model, train_loader, optimizer, criterion, loss_name, device)
+                epoch_records.append({"run_name": run_name, "epoch": epoch, "split": "train", "loss": train_loss, "accuracy": train_acc})
 
-                    evaluate_now = val_loader is not None and (epoch % config.val_interval == 0)
-                    if evaluate_now:
-                        val_loss, val_acc = _evaluate(model, val_loader, criterion, loss_name, device)
-                        epoch_records.append(
-                            {
-                                "run_name": run_name,
-                                "epoch": epoch,
-                                "split": "val",
-                                "loss": val_loss,
-                                "accuracy": val_acc,
-                            }
-                        )
-                        best_val_acc = max(best_val_acc, val_acc)
-                        best_epoch = epoch if val_acc >= best_val_acc else best_epoch
-                        print(f"             val_loss={val_loss:.4f} val_acc={val_acc*100:.2f}%")
+                if val_loader is not None and (epoch % config.val_interval == 0):
+                    val_loss, val_acc = _evaluate(model, val_loader, criterion, loss_name, device)
+                    epoch_records.append({"run_name": run_name, "epoch": epoch, "split": "val", "loss": val_loss, "accuracy": val_acc})
+                    best_val_acc = max(best_val_acc, val_acc)
+                    best_epoch = epoch if val_acc >= best_val_acc else best_epoch
 
-                    test_due = epoch % config.val_interval == 0
-                    if test_due:
-                        test_loss, test_acc = _evaluate(model, test_loader, criterion, loss_name, device)
-                        epoch_records.append(
-                            {
-                                "run_name": run_name,
-                                "epoch": epoch,
-                                "split": "test",
-                                "loss": test_loss,
-                                "accuracy": test_acc,
-                            }
-                        )
-                        best_test_acc = max(best_test_acc, test_acc)
-                        print(f"             test_loss={test_loss:.4f} test_acc={test_acc*100:.2f}%")
+                if epoch % config.val_interval == 0:
+                    test_loss, test_acc = _evaluate(model, test_loader, criterion, loss_name, device)
+                    epoch_records.append({"run_name": run_name, "epoch": epoch, "split": "test", "loss": test_loss, "accuracy": test_acc})
+                    best_test_acc = max(best_test_acc, test_acc)
 
-                    if epoch % config.checkpoint_interval == 0:
-                        _save_checkpoint(
-                            model,
-                            optimizer,
-                            epoch,
-                            run_checkpoint_dir,
-                            config.max_checkpoints,
-                            saved_checkpoints,
-                        )
+                if epoch % config.checkpoint_interval == 0:
+                    _save_checkpoint(model, optimizer, epoch, run_checkpoint_dir, config.max_checkpoints, saved_checkpoints)
 
-                _write_run_log(epoch_records, run_log_path)
+            _write_run_log(epoch_records, run_log_path)
 
-                summary = {
-                    "run_name": run_name,
-                    "model": config.model,
-                    "optimizer": optimizer_name,
-                    "loss": loss_name,
-                    "lr": lr,
-                    "epochs": config.epochs,
-                    "best_val_acc": best_val_acc if val_loader is not None else "",
-                    "best_test_acc": best_test_acc,
-                    "best_epoch": best_epoch if val_loader is not None else "",
-                    "log_path": str(run_log_path),
-                    "checkpoint_dir": str(run_checkpoint_dir),
-                    "config_path": str(run_dir / "config.yaml"),
-                }
-                _append_results(summary, results_path)
+            summary = {
+                "run_name": run_name,
+                "model": config.model,
+                "optimizer": optimizer_name,
+                "loss": loss_name,
+                "lr": lr,
+                "epochs": config.epochs,
+                "best_val_acc": best_val_acc if val_loader is not None else "",
+                "best_test_acc": best_test_acc,
+                "best_epoch": best_epoch if val_loader is not None else "",
+                "log_path": str(run_log_path),
+                "checkpoint_dir": str(run_checkpoint_dir),
+                "config_path": str(run_dir / "config.yaml"),
+            }
+            _append_results(summary, results_path)
 
 
 def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
@@ -393,7 +306,6 @@ def _resolve_path(path: str, base_dir: Path) -> Path:
 def load_config(config_path: Path) -> Dict[str, Any]:
     with config_path.open("r") as fp:
         cfg = yaml.safe_load(fp) or {}
-
     if "inherit" in cfg:
         base_path = _resolve_path(cfg["inherit"], config_path.parent)
         base_cfg = load_config(base_path)
@@ -421,9 +333,7 @@ def build_experiment_config(raw_cfg: Dict[str, Any]) -> ExperimentConfig:
         seed=raw_cfg.get("seed", 42),
         download=raw_cfg.get("download", True),
     )
-
     output_dir = Path(raw_cfg.get("output_dir", "./output")).resolve()
-
     return ExperimentConfig(
         model=raw_cfg.get("model", "ResNet18"),
         device=raw_cfg.get("device", "cuda"),
@@ -446,7 +356,6 @@ def main() -> None:
     args = _parse_args()
     config_path = Path(args.cfg).resolve()
     raw_cfg = load_config(config_path)
-
     if args.epochs is not None:
         raw_cfg["epochs"] = args.epochs
     if args.device is not None:
@@ -455,7 +364,6 @@ def main() -> None:
         raw_cfg["output_dir"] = args.output_dir
     if args.lr is not None:
         raw_cfg["learning_rates"] = [args.lr]
-
     experiment_cfg = build_experiment_config(raw_cfg)
     run_experiments(experiment_cfg, raw_cfg, config_path)
 
