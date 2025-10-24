@@ -44,8 +44,8 @@ pip install matplotlib pandas pyyaml
 通过顶层入口脚本或直接调用 `scripts/train.py` 均可发起实验。如需批量运行，可使用 `scripts/run_all.sh`。
 
 ```bash
-# 使用默认 ResNet18 + Adam 配置
-python train.py --cfg config/adam_config.yaml
+# 使用默认 ResNet18 + Adam 配置(KEy)
+python -m scripts.train --cfg config/adam_config.yaml --lr 0.1 --output-dir ./output/adam
 
 # 指定 SGD 配置，并覆盖训练轮数/输出路径
 python train.py --cfg config/sgd_config.yaml --epochs 10 --output-dir ./output_sgd

@@ -4,14 +4,14 @@
 
 ## ✅ **TODO.md - NNDL Project**
 
-```markdown
+
 # NNDL Project - Adam vs SGD 泛化能力研究
 
 ## 🎯 研究目标
 本项目旨在探究 **Adam** 和 **SGD** 在不同损失函数（**MSE** 和 **CE**）下的泛化能力差异。使用 **CIFAR-10** 数据集，并配置不同的学习率（`0.001`, `0.005`, `0.01`, `0.1`）进行训练。实验中需要记录每个 epoch 的训练过程，存储所有中间 **loss** 和 **checkpoint**。
 
 ## 🧩 项目结构
-```
+
 
 NNDL/
 ├── config/            # 📦 配置文件（超参数配置）

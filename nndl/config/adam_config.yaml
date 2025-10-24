@@ -1,4 +1,4 @@
-inherit: "config/default.yaml"
+inherit: "default.yaml"
 optimizer:
   name: "adam"
   lr: 0.001

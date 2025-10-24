@@ -12,7 +12,7 @@ CONFIGS=(
 echo ">>> Starting batch training runs"
 for cfg in "${CONFIGS[@]}"; do
   echo "---- Running with config: ${cfg}"
-  "${PYTHON_BIN}" "${ROOT_DIR}/train.py" --cfg "${cfg}" "$@"
+  "${PYTHON_BIN}" "${ROOT_DIR}/scripts/train.py" --cfg "${cfg}" "$@"
 done
 
 echo ">>> All runs completed"

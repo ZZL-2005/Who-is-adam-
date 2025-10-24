@@ -408,6 +408,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, help="Override number of epochs.")
     parser.add_argument("--device", type=str, help="Override device (cpu/cuda).")
     parser.add_argument("--output-dir", type=str, help="Override output directory.")
+    parser.add_argument("--lr", type=float, help="Override learning rate.")
     return parser.parse_args()
 
 
@@ -452,6 +453,8 @@ def main() -> None:
         raw_cfg["device"] = args.device
     if args.output_dir is not None:
         raw_cfg["output_dir"] = args.output_dir
+    if args.lr is not None:
+        raw_cfg["learning_rates"] = [args.lr]
 
     experiment_cfg = build_experiment_config(raw_cfg)
     run_experiments(experiment_cfg, raw_cfg, config_path)

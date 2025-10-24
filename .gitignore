@@ -1,0 +1,28 @@
+# ===== Python cache =====
+__pycache__/
+*.pyc
+*.pyo
+
+# ===== Data =====
+data/
+datasets/*.pkl
+datasets/*.npz
+
+# ===== Outputs and logs =====
+output/
+logs/
+results/
+
+# ===== Environment =====
+*.env
+*.venv
+.venv/
+venv/
+env/
+
+# ===== System =====
+.DS_Store
+Thumbs.db
+
+# ===== Others =====
+proxy.txt
